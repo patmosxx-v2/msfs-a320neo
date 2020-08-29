@@ -1,5 +1,43 @@
 class A320_Neo_EICAS extends Airliners.BaseEICAS {
     get templateID() { return "A320_Neo_EICAS"; }
+    // Overriding inherited changePage function in order to modify ECAM button LED's
+    changePage(_pageName, automatic = false) {
+        let pageName = _pageName.toUpperCase();
+        let pageState = SimVar.GetSimVarValue("L:XMLVAR_ECAM_PAGE_STATE", "number");
+        if (pageState == 0 || !automatic) {
+            this.SwitchToPageName(BaseEICAS.LOWER_SCREEN_GROUP_NAME, pageName);
+        }
+
+        for (var i = 0; i < this.lowerScreenPages.length; i++) {
+            if (this.lowerScreenPages[i].name == pageName) {
+                let original = SimVar.GetSimVarValue("L:XMLVAR_ECAM_CURRENT_PAGE", "number");
+                if (pageState == 0) {
+                    // If current page was selected automatically
+                    if (!automatic) {
+                        SimVar.SetSimVarValue("L:XMLVAR_ECAM_PAGE_STATE", "number", 1);
+                    } else {
+                        SimVar.SetSimVarValue("L:XMLVAR_ECAM_AUTOMATIC_PAGE", "number", i);
+                    }
+                    SimVar.SetSimVarValue("L:XMLVAR_ECAM_CURRENT_PAGE", "number", i);
+                } else if (pageState == 1) {
+                    // If current page was selected manually
+                    if (!automatic) {
+                        if (original == i) {
+                            SimVar.SetSimVarValue("L:XMLVAR_ECAM_PAGE_STATE", "number", 0);
+                            this.SwitchToPageName(BaseEICAS.LOWER_SCREEN_GROUP_NAME, this.lowerScreenPages[tempPage].name);
+                            let tempPage = SimVar.GetSimVarValue("L:XMLVAR_ECAM_AUTOMATIC_PAGE", "number");
+                            SimVar.SetSimVarValue("L:XMLVAR_ECAM_CURRENT_PAGE", "number", tempPage);
+                        } else {
+                            SimVar.SetSimVarValue("L:XMLVAR_ECAM_CURRENT_PAGE", "number", i);
+                        }  
+                    } else {
+                        SimVar.SetSimVarValue("L:XMLVAR_ECAM_AUTOMATIC_PAGE", "number", i);
+                    }
+                }
+                break;
+            }
+        }
+    }
     createUpperScreenPage() {
         this.upperTopScreen = new Airliners.EICASScreen("TopScreen", "TopScreen", "a320-neo-upper-ecam");
         this.annunciations = new Cabin_Annunciations();
@@ -21,22 +59,25 @@ class A320_Neo_EICAS extends Airliners.BaseEICAS {
         this.createLowerScreenPage("DOOR", "BottomScreen", "a320-neo-lower-ecam-door"); // MODIFIED
         this.createLowerScreenPage("WHEEL", "BottomScreen", "a320-neo-lower-ecam-wheel"); // MODIFIED
         this.createLowerScreenPage("FTCL", "BottomScreen", "a320-neo-lower-ecam-ftcl"); // MODIFIED
+        // this.createLowerScreenPage("STATUS", "BottomScreen", "a320-neo-lower-ecam-status"); // MODIFIED
+        // this.createLowerScreenPage("CRUISE", "BottomScreen", "a320-neo-lower-ecam-cruise"); // MODIFIED
     }
     getLowerScreenChangeEventNamePrefix() {
         return "ECAM_CHANGE_PAGE_";
     }
     Init() {
         super.Init();
-        this.changePage("FUEL"); // MODIFIED
+        // this.changePage("FUEL", true); // MODIFIED
 
-        this.lastAPUMasterState = 0 // MODIFIED
+        this.lastAPUMasterState = 0; // MODIFIED
         this.externalPowerWhenApuMasterOnTimer = -1 // MODIFIED
         this.selfTestDiv = this.querySelector("#SelfTestDiv");
         this.selfTestTimer = -1;
+        SimVar.SetSimVarValue("L:XMLVAR_ECAM_SELF_TEST_TIMER", "number", this.selfTestTimer);
         this.selfTestTimerStarted = false;
-        this.doorPageActivated = false
-        this.electricity = this.querySelector("#Electricity")
-        this.changePage("DOOR"); // MODIFIED
+        this.doorPageActivated = false;
+        this.electricity = this.querySelector("#Electricity");
+        this.changePage("DOOR", true); // MODIFIED
     }
     onUpdate(_deltaTime) {
         super.onUpdate(_deltaTime);
@@ -57,10 +98,12 @@ class A320_Neo_EICAS extends Airliners.BaseEICAS {
         // Check if external power is on & timer not already started
         if ((externalPower || apuOn) && !this.selfTestTimerStarted) {
             this.selfTestTimer = 14.25;
+            SimVar.SetSimVarValue("L:XMLVAR_ECAM_SELF_TEST_TIMER", "number", this.selfTestTimer);
             this.selfTestTimerStarted = true;
         } // timer
         if (this.selfTestTimer >= 0) {
             this.selfTestTimer -= _deltaTime / 1000;
+            SimVar.SetSimVarValue("L:XMLVAR_ECAM_SELF_TEST_TIMER", "number", this.selfTestTimer);
             if (this.selfTestTimer <= 0) {
                 this.selfTestDiv.style.display = "none";
             }
@@ -71,20 +114,20 @@ class A320_Neo_EICAS extends Airliners.BaseEICAS {
         // automaticaly switch to the APU page when apu master switch is on
         if (this.lastAPUMasterState != currentAPUMasterState && currentAPUMasterState === 1) {  
             this.lastAPUMasterState = currentAPUMasterState;  
-            this.changePage("APU")
+            this.changePage("APU", true);
 
             //if external power is off when turning on apu, only show the apu page for 10 seconds, then the DOOR page
-            var externalPower = SimVar.GetSimVarValue("EXTERNAL POWER ON", "Bool")  
+            var externalPower = SimVar.GetSimVarValue("EXTERNAL POWER ON", "Bool")  ;
             if (externalPower === 0) {  
-                this.externalPowerWhenApuMasterOnTimer = 10
+                this.externalPowerWhenApuMasterOnTimer = 10;
             }
 
         }
 
         if (this.externalPowerWhenApuMasterOnTimer >= 0) {  
-            this.externalPowerWhenApuMasterOnTimer -= _deltaTime/1000
+            this.externalPowerWhenApuMasterOnTimer -= _deltaTime/1000;
             if (this.externalPowerWhenApuMasterOnTimer <= 0) {  
-                this.changePage("DOOR")  
+                this.changePage("DOOR", true); 
             }  
         }  
 
@@ -94,11 +137,11 @@ class A320_Neo_EICAS extends Airliners.BaseEICAS {
         var cateringDoorPctOpen = SimVar.GetSimVarValue("INTERACTIVE POINT OPEN:3", "percent");
         var fwdCargoPctOpen = SimVar.GetSimVarValue("INTERACTIVE POINT OPEN:5", "percent");
         if ((cabinDoorPctOpen >= 20 || cateringDoorPctOpen >= 20 || fwdCargoPctOpen >= 20) && !this.doorPageActivated) {
-            this.changePage("DOOR")
-            this.doorPageActivated = true
+            this.changePage("DOOR", true);
+            this.doorPageActivated = true;
         }
         if (!(cabinDoorPctOpen >= 20 || cateringDoorPctOpen >= 20 || fwdCargoPctOpen >= 20) && this.doorPageActivated) {
-            this.doorPageActivated = false
+            this.doorPageActivated = false;
         }
         // modification ends here
     }
